@@ -1,102 +1,100 @@
 import streamlit as st
+from pytrends.request import TrendReq
+import pandas as pd
+from datetime import date
 
-st.set_page_config(page_title="TikTok Product Analyzer", layout="centered")
+st.set_page_config(page_title="Riset Produk TikTok", layout="wide")
 
-st.title("🔥 TikTok Product Analyzer")
-st.write("Analisa apakah produk layak dijual atau tidak")
+st.title("🔥 Riset Produk TikTok + Google Trends + Viral Score")
 
-# =========================
-# INPUT PRODUK
-# =========================
-st.markdown("### 📦 Input Produk")
+# ================= INPUT =================
+keywords = st.text_input(
+    "Masukkan keyword (pisahkan koma):",
+    "kipas leher, blender portable"
+)
 
-produk = st.text_input("Nama Produk")
-view = st.number_input("Jumlah View Video", min_value=0)
-komentar = st.number_input("Jumlah Komentar", min_value=0)
-harga = st.number_input("Harga Produk (Rp)", min_value=0)
+# Mode waktu
+mode_waktu = st.radio(
+    "Pilih Mode Waktu:",
+    ["Cepat (Preset)", "Custom Tanggal"]
+)
 
-# =========================
-# SETTING FILTER
-# =========================
-st.markdown("### ⚙️ Setting Filter")
+if mode_waktu == "Cepat (Preset)":
+    timeframe = st.selectbox(
+        "Pilih rentang waktu:",
+        ["now 7-d", "today 1-m", "today 3-m", "today 12-m"]
+    )
+else:
+    start_date = st.date_input("Tanggal mulai", date(2024, 1, 1))
+    end_date = st.date_input("Tanggal akhir", date.today())
+    timeframe = f"{start_date} {end_date}"
 
-min_view = st.number_input("Minimal View", value=50000)
+# ================= FUNCTION =================
+def analisa_tren(series):
+    first = series.iloc[0]
+    last = series.iloc[-1]
 
-min_komentar = st.number_input("Minimal Komentar", value=50)
-max_komentar = st.number_input("Maksimal Komentar", value=10000)
-
-min_harga = st.number_input("Harga Minimal (Rp)", value=10000)
-max_harga = st.number_input("Harga Maksimal (Rp)", value=100000)
-
-# =========================
-# FUNGSI ANALISA
-# =========================
-def analisa(view, komentar, harga):
-    skor = 0
-    gagal = []
-
-    # VIEW
-    if view >= min_view:
-        skor += 2
+    if last > first * 1.2:
+        return "🔥 NAIK"
+    elif last < first * 0.8:
+        return "⚠️ TURUN"
     else:
-        gagal.append("View kurang")
+        return "😐 STABIL"
 
-    # KOMENTAR MIN & MAX
-    if komentar < min_komentar:
-        gagal.append("Komentar terlalu sedikit")
-    elif komentar > max_komentar:
-        gagal.append("Komentar terlalu banyak (kemungkinan tidak natural)")
-    else:
-        skor += 2
+def hitung_viral_score(series):
+    max_val = series.max()
+    mean_val = series.mean()
 
-    # HARGA RANGE
-    if harga < min_harga:
-        gagal.append("Harga terlalu murah (margin kecil)")
-    elif harga > max_harga:
-        gagal.append("Harga terlalu mahal")
-    else:
-        skor += 1
+    growth = (series.iloc[-1] - series.iloc[0]) / (series.iloc[0] + 1)
+    spike = max_val - mean_val
 
-    return skor, gagal
+    score = (growth * 50) + (spike * 0.5)
 
-# =========================
-# TOMBOL ANALISA
-# =========================
-if st.button("Analisa Sekarang"):
-    skor, gagal = analisa(view, komentar, harga)
+    score = max(0, min(100, score))
+    return round(score, 2)
 
-    # HASIL
-    if skor >= 4:
-        st.success("🔥 Produk Berpotensi Viral!")
-    elif skor >= 2:
-        st.warning("⚠️ Lumayan, perlu testing")
-    else:
-        st.error("❌ Tidak memenuhi kriteria")
+# ================= BUTTON =================
+if st.button("🔍 MULAI RISET"):
+    try:
+        pytrends = TrendReq(hl='id-ID', tz=360)
 
-    st.subheader(f"Skor: {skor}/5")
+        kw_list = [k.strip() for k in keywords.split(",")]
 
-    # MASALAH
-    if gagal:
-        st.markdown("### ❌ Masalah:")
-        for g in gagal:
-            st.write(f"- {g}")
+        pytrends.build_payload(kw_list, timeframe=timeframe, geo='ID')
 
-    # ANALISA KOMENTAR
-    st.markdown("### 💬 Analisa Komentar:")
+        data = pytrends.interest_over_time()
 
-    if komentar < min_komentar:
-        st.write("❌ Terlalu sedikit → minat beli rendah")
-    elif komentar > max_komentar:
-        st.write("⚠️ Terlalu banyak → bisa jadi spam / tidak natural")
-    else:
-        st.write("✅ Ideal → tanda produk diminati")
+        if not data.empty:
+            st.subheader("📈 Grafik Tren")
+            st.line_chart(data[kw_list])
 
-    # REKOMENDASI
-    st.markdown("### 💡 Rekomendasi:")
+            st.subheader("📊 Analisa + Viral Score")
 
-    if skor >= 4:
-        st.write("👉 GAS! Langsung jual + bikin banyak konten")
-    elif skor >= 2:
-        st.write("👉 Test dulu dengan beberapa variasi video")
-    else:
-        st.write("👉 SKIP, cari produk lain")
+            result = []
+            for kw in kw_list:
+                status = analisa_tren(data[kw])
+                score = hitung_viral_score(data[kw])
+
+                result.append({
+                    "Keyword": kw,
+                    "Status": status,
+                    "Viral Score": score
+                })
+
+            df = pd.DataFrame(result).sort_values(by="Viral Score", ascending=False)
+            st.dataframe(df)
+
+        # ================= RELATED =================
+        st.subheader("🔑 Keyword Viral (Rising)")
+        related = pytrends.related_queries()
+
+        for kw in kw_list:
+            st.markdown(f"### {kw}")
+
+            if kw in related:
+                rising = related[kw]['rising']
+                if rising is not None:
+                    st.dataframe(rising.head(5))
+
+    except Exception as e:
+        st.error(f"Error: {e}")
